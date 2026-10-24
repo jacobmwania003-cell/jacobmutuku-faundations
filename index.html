@@ -39,7 +39,7 @@ button.red{background:#c0392b}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,collection,addDoc,deleteDoc,doc,updateDoc,onSnapshot,query,where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore,collection,addDoc,deleteDoc,doc,updateDoc,setDoc,onSnapshot,query,where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDLDw73TgCaItVk_F2Nj-Q0VpqWGQCiqKc",
@@ -61,7 +61,7 @@ const kes = n => "KSh " + Number(n || 0).toLocaleString();
 const sum = (arr, f) => arr.reduce((a, x) => a + (Number(f(x)) || 0), 0);
 
 let user = null, isOwner = false, tab = "summary";
-let data = {products: [], trips: [], sales: [], expenses: []};
+let data = {products: [], trips: [], sales: [], expenses: [], users: []};
 let unsubs = [];
 
 function toast(msg){
@@ -85,7 +85,7 @@ window.logout = () => signOut(auth);
 
 function shell(){
   const tabs = isOwner
-    ? [["summary","Summary"],["trips","Trips"],["sales","Sales"],["expenses","Expenses"],["products","Products"]]
+    ? [["summary","Summary"],["sellers","Sellers"],["trips","Trips"],["sales","Sales"],["expenses","Expenses"],["products","Products"]]
     : [["sales","Sales"],["trips","Trips"],["products","Products"]];
   $("app").innerHTML =
     '<div class="top"><h1>🍧 JacobMutuku foundations</h1><button class="small red" onclick="logout()">Log out</button></div>' +
@@ -133,10 +133,12 @@ function refresh(){
       c("Profit this month", kes(salesMonth - spentMonth)) + c("Money invested", kes(invested)) +
       c("Pops made (total)", made) + c("Pops sold (total)", sold) +
       c("In chest freezer", freezer) + c("With sellers now", withSellers) + '</div>';
-    const by = {};
-    s.filter(x => x.date === d).forEach(x => by[x.email] = (by[x.email]||0) + Number(x.total));
-    h += '<div class="card"><b>Sales today by seller</b>' +
-      (Object.keys(by).length ? Object.keys(by).map(k => '<div>'+esc(k)+': <b>'+kes(by[k])+'</b></div>').join("") : '<div class="muted">No sales yet today.</div>') + '</div>';
+    h += '<div class="card"><b>Sellers</b>' + sellerRows(d) + '</div>';
+  }
+
+  if (tab === "sellers"){
+    h += '<div class="card"><b>My sellers</b><div class="muted">A seller shows here after they log in one time.</div></div>';
+    h += sellerCards(d);
   }
 
   if (tab === "trips"){
@@ -176,6 +178,42 @@ function refresh(){
   list.innerHTML = h;
 }
 function c(a, b){ return '<div class="card"><small>' + a + '</small><b>' + b + '</b></div>'; }
+
+function sellerStats(u, d){
+  const sales = data.sales.filter(x => x.uid === u.id);
+  const trips = data.trips.filter(x => x.uid === u.id);
+  const out = sum(trips.filter(x => x.returned == null), x => x.taken);
+  return {
+    today: sum(sales.filter(x => x.date === d), x => x.total),
+    total: sum(sales, x => x.total),
+    out: out,
+    status: out > 0
+  };
+}
+function sellerList(){
+  return data.users.filter(u => (u.email || "").toLowerCase() !== OWNER);
+}
+function sellerRows(d){
+  const L = sellerList();
+  if (!L.length) return '<div class="muted">No sellers yet. A seller shows here after the first login.</div>';
+  return L.map(u => {
+    const s = sellerStats(u, d);
+    return '<div>' + esc(u.email) + ': <b>' + kes(s.today) + '</b> today ' + (s.status ? '<span class="out">(out: ' + s.out + ')</span>' : '') + '</div>';
+  }).join("");
+}
+function sellerCards(d){
+  const L = sellerList();
+  if (!L.length) return '<div class="muted">No sellers yet.</div>';
+  return L.map(u => {
+    const s = sellerStats(u, d);
+    const seen = u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "-";
+    return '<div class="card"><b>' + esc(u.email) + '</b><br>' +
+      (s.status ? '<span class="out">Out selling: ' + s.out + ' pops</span>' : '<span class="ok">Back / not out</span>') +
+      '<br>Sales today: <b>' + kes(s.today) + '</b>' +
+      '<br>All sales: <b>' + kes(s.total) + '</b>' +
+      '<br><span class="muted">Last login: ' + esc(seen) + '</span></div>';
+  }).join("");
+}
 
 window.addTrip = async () => {
   const n = Number($("taken").value);
@@ -232,14 +270,16 @@ function sub(name, ref){
 
 onAuthStateChanged(auth, u => {
   unsubs.forEach(f => f()); unsubs = [];
-  data = {products: [], trips: [], sales: [], expenses: []};
+  data = {products: [], trips: [], sales: [], expenses: [], users: []};
   if (!u){ user = null; showLogin(); return; }
   user = u;
   isOwner = (u.email || "").toLowerCase() === OWNER;
   tab = isOwner ? "summary" : "sales";
+  setDoc(doc(db, "users", u.uid), {email: u.email, lastLogin: Date.now()}, {merge: true}).catch(() => {});
   shell();
   sub("products", collection(db, "products"));
   if (isOwner){
+    sub("users", collection(db, "users"));
     sub("trips", collection(db, "trips"));
     sub("sales", collection(db, "sales"));
     sub("expenses", collection(db, "expenses"));
