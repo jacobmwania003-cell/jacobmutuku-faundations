@@ -15,6 +15,7 @@ h1{color:#1155c4;font-size:24px;margin:8px 0}
 .tabs button{flex:0 0 auto;padding:10px 14px;border:1px solid #cfd8e3;background:#fff;border-radius:10px;font-size:15px}
 .tabs button.on{background:#1155c4;color:#fff;border-color:#1155c4}
 .card{background:#fff;border:1px solid #dde4ee;border-radius:12px;padding:12px;margin:8px 0}
+.tap{cursor:pointer;border-left:5px solid #1155c4}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .grid .card{margin:0}
 .grid small{color:#5b6877}
@@ -23,6 +24,7 @@ input,select,button.act{width:100%;padding:12px;margin:4px 0;font-size:16px;bord
 button.act{background:#1155c4;color:#fff;border:none}
 button.small{padding:8px 12px;border:none;border-radius:8px;background:#2e9e4f;color:#fff;margin:4px 4px 0 0;font-size:14px}
 button.red{background:#c0392b}
+button.grey{background:#5b6877}
 .out{color:#c0392b;font-weight:bold}
 .ok{color:#2e9e4f;font-weight:bold}
 .muted{color:#5b6877;font-size:13px}
@@ -59,9 +61,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const today = () => { const d = new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 const kes = n => "KSh " + Number(n || 0).toLocaleString();
 const sum = (arr, f) => arr.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+const low = s => String(s || "").toLowerCase();
 
-let user = null, isOwner = false, tab = "summary";
-let data = {products: [], trips: [], sales: [], expenses: [], users: []};
+let user = null, isOwner = false, tab = "summary", selSeller = null;
+let data = {products: [], trips: [], sales: [], expenses: [], users: [], sellers: []};
 let unsubs = [];
 
 function toast(msg){
@@ -96,14 +99,82 @@ function shell(){
 }
 
 window.setTab = t => {
-  tab = t;
+  tab = t; selSeller = null;
   document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.id === "t_" + t));
   let f = "";
   if (t === "trips") f = '<div class="card"><b>Start a trip</b><input id="taken" type="number" placeholder="Pops taken in the cooler box"><button class="act" onclick="addTrip()">Start trip</button></div>';
   if (t === "sales") f = '<div class="card"><b>Add a sale</b><select id="prod"></select><input id="qty" type="number" placeholder="How many pops sold"><label><input id="paid" type="checkbox" checked style="width:auto"> Paid</label><button class="act" onclick="addSale()">Add sale</button></div>';
   if (t === "expenses") f = '<div class="card"><b>Add money spent</b><input id="item" placeholder="What for? (e.g. sugar, fruit)"><input id="amt" type="number" placeholder="Amount (KSh)"><input id="made" type="number" placeholder="Pops made (optional)"><button class="act" onclick="addExpense()">Save</button></div>';
   if (t === "products" && isOwner) f = '<div class="card"><b>Add a flavor</b><input id="pname" placeholder="Flavor (e.g. Mango)"><input id="pprice" type="number" placeholder="Price (KSh)"><button class="act" onclick="addProduct()">Add flavor</button></div>';
+  if (t === "sellers") f = '<div class="card"><b>Add a seller to my list</b><input id="semail" type="email" placeholder="Seller email"><button class="act" onclick="addSeller()">Add seller</button><div class="muted">The seller must also have a login in Firebase Authentication.</div></div>';
   $("content").innerHTML = f + '<div id="list"></div>';
+  refresh();
+};
+
+function sellerEmails(){
+  const set = {};
+  data.users.forEach(u => { const k = low(u.email); if (k) set[k] = {email: u.email, key: k, lastLogin: u.lastLogin}; });
+  data.sellers.forEach(s => { const k = low(s.email); if (!k) return; if (!set[k]) set[k] = {email: s.email, key: k}; set[k].docId = s.id; });
+  data.sales.concat(data.trips).forEach(x => { const k = low(x.email); if (k && !set[k]) set[k] = {email: x.email, key: k}; });
+  delete set[OWNER];
+  return Object.values(set).sort((a, b) => a.key < b.key ? -1 : 1);
+}
+function stats(k, d){
+  const ym = d.slice(0, 7);
+  const S = data.sales.filter(x => low(x.email) === k);
+  const T = data.trips.filter(x => low(x.email) === k);
+  return {
+    S: S, T: T,
+    today: sum(S.filter(x => x.date === d), x => x.total),
+    month: sum(S.filter(x => (x.date||"").startsWith(ym)), x => x.total),
+    all: sum(S, x => x.total),
+    unpaid: sum(S.filter(x => !x.paid), x => x.total),
+    sold: sum(S, x => x.qty),
+    out: sum(T.filter(x => x.returned == null), x => x.taken)
+  };
+}
+const kAttr = k => encodeURIComponent(k).replace(/'/g, "%27");
+
+function sellerCards(d){
+  const L = sellerEmails();
+  if (!L.length) return '<div class="muted">No sellers yet. Add a seller email above.</div>';
+  return L.map(u => {
+    const s = stats(u.key, d);
+    const seen = u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "Not logged in yet";
+    return '<div class="card tap" onclick="openSeller(\'' + kAttr(u.key) + '\')"><b>' + esc(u.email) + '</b><br>' +
+      (s.out > 0 ? '<span class="out">Out selling: ' + s.out + ' pops</span>' : '<span class="ok">Not out</span>') +
+      '<br>Sales today: <b>' + kes(s.today) + '</b> · All: <b>' + kes(s.all) + '</b>' +
+      '<br><span class="muted">Last login: ' + esc(seen) + ' · Tap to open</span></div>';
+  }).join("");
+}
+
+function sellerDetail(k, d){
+  const s = stats(k, d);
+  const u = sellerEmails().find(x => x.key === k) || {email: k};
+  let h = '<button class="small grey" onclick="setTab(\'sellers\')">← Back to sellers</button>';
+  h += '<h1 style="font-size:20px">' + esc(u.email) + '</h1>';
+  h += '<div class="grid">' +
+    c("Sales today", kes(s.today)) + c("Sales this month", kes(s.month)) +
+    c("All sales", kes(s.all)) + c("Not paid", kes(s.unpaid)) +
+    c("Pops out now", s.out) + c("Pops sold", s.sold) + '</div>';
+  h += '<div class="card"><b>Trips</b></div>';
+  h += s.T.length ? s.T.map(t =>
+    '<div class="card"><b>' + esc(t.date) + '</b><br>Taken: <b>' + t.taken + '</b> | ' +
+    (t.returned == null ? '<span class="out">Still out</span>' : 'Returned: <b>' + t.returned + '</b> <span class="ok">Done</span>') + '</div>'
+  ).join("") : '<div class="muted">No trips yet.</div>';
+  h += '<div class="card"><b>Sales</b></div>';
+  h += s.S.length ? s.S.map(x =>
+    '<div class="card"><b>' + x.qty + ' × ' + esc(x.product) + '</b> = ' + kes(x.total) +
+    '<br><span class="muted">' + esc(x.date) + '</span> ' +
+    (x.paid ? '<span class="ok">Paid</span>' : '<span class="out">Not paid</span><br><button class="small" onclick="paySale(\'' + x.id + '\')">Mark paid</button>') + '</div>'
+  ).join("") : '<div class="muted">No sales yet.</div>';
+  if (u.docId) h += '<button class="small red" onclick="delItem(\'sellers\',\'' + u.docId + '\');setTab(\'sellers\')">Remove from my list</button>';
+  return h;
+}
+
+window.openSeller = k => {
+  selSeller = decodeURIComponent(k);
+  $("content").innerHTML = '<div id="list"></div>';
   refresh();
 };
 
@@ -133,12 +204,11 @@ function refresh(){
       c("Profit this month", kes(salesMonth - spentMonth)) + c("Money invested", kes(invested)) +
       c("Pops made (total)", made) + c("Pops sold (total)", sold) +
       c("In chest freezer", freezer) + c("With sellers now", withSellers) + '</div>';
-    h += '<div class="card"><b>Sellers</b>' + sellerRows(d) + '</div>';
+    h += '<div class="card"><b>Sellers</b></div>' + sellerCards(d);
   }
 
   if (tab === "sellers"){
-    h += '<div class="card"><b>My sellers</b><div class="muted">A seller shows here after they log in one time.</div></div>';
-    h += sellerCards(d);
+    h += selSeller ? sellerDetail(selSeller, d) : sellerCards(d);
   }
 
   if (tab === "trips"){
@@ -179,42 +249,12 @@ function refresh(){
 }
 function c(a, b){ return '<div class="card"><small>' + a + '</small><b>' + b + '</b></div>'; }
 
-function sellerStats(u, d){
-  const sales = data.sales.filter(x => x.uid === u.id);
-  const trips = data.trips.filter(x => x.uid === u.id);
-  const out = sum(trips.filter(x => x.returned == null), x => x.taken);
-  return {
-    today: sum(sales.filter(x => x.date === d), x => x.total),
-    total: sum(sales, x => x.total),
-    out: out,
-    status: out > 0
-  };
-}
-function sellerList(){
-  return data.users.filter(u => (u.email || "").toLowerCase() !== OWNER);
-}
-function sellerRows(d){
-  const L = sellerList();
-  if (!L.length) return '<div class="muted">No sellers yet. A seller shows here after the first login.</div>';
-  return L.map(u => {
-    const s = sellerStats(u, d);
-    return '<div>' + esc(u.email) + ': <b>' + kes(s.today) + '</b> today ' + (s.status ? '<span class="out">(out: ' + s.out + ')</span>' : '') + '</div>';
-  }).join("");
-}
-function sellerCards(d){
-  const L = sellerList();
-  if (!L.length) return '<div class="muted">No sellers yet.</div>';
-  return L.map(u => {
-    const s = sellerStats(u, d);
-    const seen = u.lastLogin ? new Date(u.lastLogin).toLocaleString() : "-";
-    return '<div class="card"><b>' + esc(u.email) + '</b><br>' +
-      (s.status ? '<span class="out">Out selling: ' + s.out + ' pops</span>' : '<span class="ok">Back / not out</span>') +
-      '<br>Sales today: <b>' + kes(s.today) + '</b>' +
-      '<br>All sales: <b>' + kes(s.total) + '</b>' +
-      '<br><span class="muted">Last login: ' + esc(seen) + '</span></div>';
-  }).join("");
-}
-
+window.addSeller = async () => {
+  const e = low($("semail").value.trim());
+  if (!e || e.indexOf("@") < 1) return alert("Type the seller email.");
+  await addDoc(collection(db, "sellers"), {email: e, ts: Date.now()});
+  $("semail").value = "";
+};
 window.addTrip = async () => {
   const n = Number($("taken").value);
   if (!(n > 0)) return alert("Type how many pops you took.");
@@ -270,16 +310,17 @@ function sub(name, ref){
 
 onAuthStateChanged(auth, u => {
   unsubs.forEach(f => f()); unsubs = [];
-  data = {products: [], trips: [], sales: [], expenses: [], users: []};
+  data = {products: [], trips: [], sales: [], expenses: [], users: [], sellers: []};
   if (!u){ user = null; showLogin(); return; }
   user = u;
-  isOwner = (u.email || "").toLowerCase() === OWNER;
+  isOwner = low(u.email) === OWNER;
   tab = isOwner ? "summary" : "sales";
   setDoc(doc(db, "users", u.uid), {email: u.email, lastLogin: Date.now()}, {merge: true}).catch(() => {});
   shell();
   sub("products", collection(db, "products"));
   if (isOwner){
     sub("users", collection(db, "users"));
+    sub("sellers", collection(db, "sellers"));
     sub("trips", collection(db, "trips"));
     sub("sales", collection(db, "sales"));
     sub("expenses", collection(db, "expenses"));
