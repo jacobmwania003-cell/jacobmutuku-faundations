@@ -222,7 +222,7 @@ function saleLine(x){
     (x.seller ? '<br>Seller: <b>' + esc(x.seller) + '</b>' : '') +
     (x.customer ? '<br>Customer: ' + esc(x.customer) : '');
 }
-  function flavorStats(){
+function flavorStats(){
   const fl = {};
   const get = n => fl[n] || (fl[n] = {made: 0, taken: 0, back: 0, out: 0});
   FLAVORS.forEach(n => get(n));
@@ -240,7 +240,7 @@ function flavorHtml(q){
   const rows = Object.keys(fl).filter(n => !k || low(n).includes(k)).map(n => {
     const f = fl[n], left = f.made - f.taken + f.back;
     return '<div style="padding:8px 0;border-top:1px solid #eef2f7">' + dot(n) + '<b>' + esc(n) + '</b>: ' +
-      (left < 0 ? '<span class="out">' + left + '</span>' : '<b>' + left + '</b>') +
+      (left < 0 ? '<b>0</b> <span class="out">(add ' + (-left) + ' in Made)</span>' : '<b>' + left + '</b>') +
       ' in freezer · ' + f.out + ' with sellers</div>';
   }).join("");
   return (rows || '<div class="muted">No flavor found.</div>') +
@@ -294,7 +294,7 @@ window.openSeller = k => {
   $("content").innerHTML = '<div id="list"></div>';
   refresh();
 };
-  function refresh(){
+function refresh(){
   const list = $("list"); if (!list) return;
   const fv = $("flv"); if (fv) fv.innerHTML = flavorHtml($("fsearch").value);
   ["sby", "tby"].forEach(id => {
@@ -314,7 +314,6 @@ window.openSeller = k => {
     const salesMonth = sum(s.filter(x => (x.date||"").startsWith(ym)), x => x.total);
     const unpaid = sum(s.filter(x => !x.paid), x => x.total);
     const spentMonth = sum(e.filter(x => (x.date||"").startsWith(ym)), x => x.amount);
-    const invested = sum(e, x => x.amount);
     const made = sum(e, x => x.qty);
     const takenAll = sum(data.trips, x => x.taken);
     const backAll = sum(data.trips.filter(x => x.returned != null), x => x.returned);
@@ -326,18 +325,19 @@ window.openSeller = k => {
     sellerEmails().forEach(u => { const st = stats(u.key, d); totExp += st.exp; totDiff += st.diff; payToday += pay(st.today); payMonth += pay(st.month); });
     const fl = flavorStats();
     const flRows = Object.keys(fl).filter(n => fl[n].made || fl[n].taken).map(n =>
-      '<div class="card">' + dot(n) + '<b>' + esc(n) + '</b><br>In freezer: <b>' + (fl[n].made - fl[n].taken + fl[n].back) + '</b> · With sellers: <b>' + fl[n].out + '</b></div>'
+      '<div class="card">' + dot(n) + '<b>' + esc(n) + '</b><br>In freezer: <b>' + Math.max(0, fl[n].made - fl[n].taken + fl[n].back) + '</b> · With sellers: <b>' + fl[n].out + '</b></div>'
     ).join("");
     h += '<div class="grid">' +
       c("Sales today", kes(salesToday)) + c("Sales this month", kes(salesMonth)) +
       c("Not paid yet", kes(unpaid)) + c("Spent this month", kes(spentMonth)) +
-      c("Profit this month", kes(salesMonth - spentMonth)) + c("Money invested", kes(invested)) +
+      c("Profit this month", kes(salesMonth - spentMonth)) +
       c("Pops made (total)", made) + c("Pops sold (total)", sold) +
-      c("In chest freezer", freezer) + c("With sellers now", withSellers) +
+      c("In chest freezer", Math.max(0, freezer)) + c("With sellers now", withSellers) +
       c("Should bring (finished trips)", kes(totExp)) + c("Sellers gain / loss", gl(totDiff)) +
       c("Damaged pops", damagedAll) +
       c("Seller pay today (" + Math.round(SELLER_RATE * 100) + "%)", kes(payToday)) + c("Seller pay this month", kes(payMonth)) +
       c("Profit after seller pay", kes(salesMonth - spentMonth - payMonth)) + '</div>';
+    if (freezer < 0) h += '<div class="card"><span class="out">The freezer shows 0.</span> <span class="muted">Pops taken are ' + (-freezer) + ' more than pops made. Add the missing pops in the Made tab to get the exact number.</span></div>';
     if (flRows) h += '<div class="card"><b>Stock by flavor</b></div>' + flRows;
     h += '<div class="card"><b>Sellers</b></div>' + sellerCards(d);
   }
