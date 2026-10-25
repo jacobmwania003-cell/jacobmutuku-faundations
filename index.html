@@ -69,6 +69,8 @@ const FLAVORS = ["Mango", "Orange", "Pineapple", "Strawberry", "Ukwaju", "Saving
 const COLORS = {"Mango": "#f5a800", "Orange": "#ff7a00", "Pineapple": "#f4d03f", "Strawberry": "#e0243c", "Ukwaju": "#8a5a3c", "Savings tub": "#2aa5a0"};
 const dot = n => '<span class="dot" style="background:' + (COLORS[n] || "#9aa7b6") + '"></span>';
 const DEFAULT_PRICE = 10;
+const SELLER_RATE = 0.35;
+const pay = n => Math.round((Number(n) || 0) * SELLER_RATE);
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -250,6 +252,7 @@ window.flvSearch = () => refresh();
       (s.out > 0 ? '<span class="out">Out selling: ' + s.out + ' pops</span>' : '<span class="ok">Not out</span>') +
       '<br>Sales today: <b>' + kes(s.today) + '</b> · All: <b>' + kes(s.all) + '</b>' +
       '<br>Should bring: <b>' + kes(s.exp) + '</b> · ' + gl(s.diff) +
+      '<br>Pay (' + Math.round(SELLER_RATE * 100) + '%): today <b>' + kes(pay(s.today)) + '</b> · month <b>' + kes(pay(s.month)) + '</b> · all <b>' + kes(pay(s.all)) + '</b>' +
       '<br><span class="muted">Last login: ' + esc(seen) + ' · Tap to open</span></div>';
   }).join("");
 }
@@ -263,7 +266,8 @@ function sellerDetail(k, d){
     c("Sales today", kes(s.today)) + c("Sales this month", kes(s.month)) +
     c("All sales", kes(s.all)) + c("Not paid", kes(s.unpaid)) +
     c("Pops out now", s.out) + c("Pops sold", s.sold) +
-    c("Should bring", kes(s.exp)) + c("Gain / loss", gl(s.diff)) + '</div>';
+    c("Should bring", kes(s.exp)) + c("Gain / loss", gl(s.diff)) +
+    c("Pay this month (" + Math.round(SELLER_RATE * 100) + "%)", kes(pay(s.month))) + c("Pay all time (" + Math.round(SELLER_RATE * 100) + "%)", kes(pay(s.all))) + '</div>';
   h += '<div class="card"><b>Trips</b></div>';
   h += s.T.length ? s.T.map(t =>
     '<div class="card"><b>' + esc(t.date) + '</b><br>' + tripStatus(t) +
@@ -313,8 +317,8 @@ function refresh(){
     const freezer = made - takenAll + backAll;
     const damagedAll = sum(data.trips.filter(x => x.returned != null), x => x.damaged);
     const sold = sum(s, x => x.qty);
-    let totExp = 0, totDiff = 0;
-    sellerEmails().forEach(u => { const st = stats(u.key, d); totExp += st.exp; totDiff += st.diff; });
+    let totExp = 0, totDiff = 0, payToday = 0, payMonth = 0;
+    sellerEmails().forEach(u => { const st = stats(u.key, d); totExp += st.exp; totDiff += st.diff; payToday += pay(st.today); payMonth += pay(st.month); });
     const fl = flavorStats();
     const flRows = Object.keys(fl).filter(n => fl[n].made || fl[n].taken).map(n =>
       '<div class="card">' + dot(n) + '<b>' + esc(n) + '</b><br>In freezer: <b>' + (fl[n].made - fl[n].taken + fl[n].back) + '</b> · With sellers: <b>' + fl[n].out + '</b></div>'
@@ -326,7 +330,9 @@ function refresh(){
       c("Pops made (total)", made) + c("Pops sold (total)", sold) +
       c("In chest freezer", freezer) + c("With sellers now", withSellers) +
       c("Should bring (finished trips)", kes(totExp)) + c("Sellers gain / loss", gl(totDiff)) +
-      c("Damaged pops", damagedAll) + '</div>';
+      c("Damaged pops", damagedAll) +
+      c("Seller pay today (" + Math.round(SELLER_RATE * 100) + "%)", kes(payToday)) + c("Seller pay this month", kes(payMonth)) +
+      c("Profit after seller pay", kes(salesMonth - spentMonth - payMonth)) + '</div>';
     if (flRows) h += '<div class="card"><b>Stock by flavor</b></div>' + flRows;
     h += '<div class="card"><b>Sellers</b></div>' + sellerCards(d);
   }
@@ -348,6 +354,11 @@ function refresh(){
   if (tab === "sales"){
     const mine = sum(data.sales.filter(x => x.date === d), x => x.total);
     h += '<div class="card">Sales today: <b>' + kes(mine) + '</b></div>';
+    if (!isOwner){
+      const mo = sum(data.sales.filter(x => (x.date||"").startsWith(ym)), x => x.total);
+      const al = sum(data.sales, x => x.total);
+      h += '<div class="card"><b>Your pay (' + Math.round(SELLER_RATE * 100) + '% of your sales)</b><br>Today: <b>' + kes(pay(mine)) + '</b> · This month: <b>' + kes(pay(mo)) + '</b> · All: <b>' + kes(pay(al)) + '</b></div>';
+    }
     h += data.sales.length ? data.sales.map(x =>
       '<div class="card">' + saleLine(x) +
       '<br><span class="muted">' + esc(x.date) + (isOwner ? ' · ' + esc(x.email) : '') + '</span> ' +
