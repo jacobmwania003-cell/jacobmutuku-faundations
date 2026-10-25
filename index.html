@@ -356,4 +356,141 @@ function c(a, b){ return '<div class="card"><small>' + a + '</small><b>' + b + '
 
 window.addSeller = async () => {
   const e = low($("semail").value.trim());
-  if (!e || e.index
+    if (!e || e.indexOf("@") < 1) return alert("Type the seller email.");
+  await addDoc(collection(db, "sellers"), {email: e, ts: Date.now()});
+  $("semail").value = "";
+};
+window.pastDate = () => {
+  const v = $("tdate").value;
+  $("tdone").checked = !!v && v < today();
+};
+window.addTrip = async () => {
+  const date = $("tdate").value || today();
+  if (date > today()) return alert("The date cannot be in the future.");
+  const done = $("tdone").checked;
+  const items = {};
+  let total = 0, back = 0, dmg = 0, bad = false, extra = false;
+  FLAVORS.forEach((n, i) => {
+    const tk = Number($("tk" + i).value) || 0;
+    const br = Number($("br" + i).value) || 0;
+    const dm = Number($("dm" + i).value) || 0;
+    if (br || dm) extra = true;
+    if (tk > 0 || br > 0 || dm > 0){
+      if (br + dm > tk) bad = true;
+      items[n] = done ? {taken: tk, returned: br, damaged: dm} : {taken: tk};
+      total += tk; back += br; dmg += dm;
+    }
+  });
+  if (!(total > 0)) return alert("Type how many pops you took.");
+  if (bad) return alert("Back plus damaged cannot be more than taken.");
+  if (extra && !done) return alert("Tick 'Trip is finished' to save the back and damaged pops.");
+  const ts = date === today() ? Date.now() : new Date(date + "T12:00:00").getTime();
+  await addDoc(collection(db, "trips"), {uid: user.uid, email: user.email, date: date, taken: total, returned: done ? back : null, damaged: done ? dmg : 0, items: items, ts: ts});
+  FLAVORS.forEach((n, i) => { $("tk" + i).value = ""; $("br" + i).value = ""; $("dm" + i).value = ""; });
+  $("tdone").checked = false;
+  $("tdate").value = today();
+};
+window.endTrip = async id => {
+  const t = data.trips.find(x => x.id === id);
+  if (!t) return;
+  if (!t.items || !Object.keys(t.items).length){
+    const v = prompt("How many pops came back?");
+    if (v === null) return;
+    const n = Number(v);
+    if (isNaN(n) || n < 0) return alert("Type a number.");
+    await updateDoc(doc(db, "trips", id), {returned: n});
+    return;
+  }
+  const items = {};
+  let back = 0, dmg = 0, bad = false;
+  Object.keys(t.items).forEach((n, i) => {
+    const el = $("rt_" + id + "_" + i);
+    const ed = $("rd_" + id + "_" + i);
+    const v = el ? Number(el.value) || 0 : 0;
+    const w = ed ? Number(ed.value) || 0 : 0;
+    if (v < 0 || w < 0 || v + w > t.items[n].taken) bad = true;
+    items[n] = {taken: t.items[n].taken, returned: v, damaged: w};
+    back += v; dmg += w;
+  });
+  if (bad) return alert("Back plus damaged cannot be more than taken.");
+  await updateDoc(doc(db, "trips", id), {items: items, returned: back, damaged: dmg});
+};
+window.addSale = async () => {
+  const date = $("sdate").value || today();
+  if (date > today()) return alert("The date cannot be in the future.");
+  const name = $("sname").value.trim();
+  const q = Number($("qty").value);
+  const p = Number($("price").value);
+  if (!name) return alert("Type the seller name.");
+  if (!(q > 0)) return alert("Type how many pops sold.");
+  if (!(p > 0)) return alert("Type the price of one pop.");
+  const ts = date === today() ? Date.now() : new Date(date + "T12:00:00").getTime();
+  await addDoc(collection(db, "sales"), {uid: user.uid, email: user.email, date: date, seller: name, product: "Ice pops", qty: q, price: p, total: p * q, paid: $("paid").checked, ts: ts});
+  $("qty").value = "";
+};
+window.paySale = id => updateDoc(doc(db, "sales", id), {paid: true});
+window.addExpense = async () => {
+  const a = Number($("amt").value);
+  if (!$("item").value || !(a > 0)) return alert("Type what for and the amount.");
+  const items = {};
+  let q = 0;
+  FLAVORS.forEach((n, i) => { const v = Number($("mk" + i).value) || 0; if (v > 0){ items[n] = v; q += v; } });
+  if (!(q > 0)) q = Number($("made").value) || 0;
+  const rec = {item: $("item").value, amount: a, qty: q, date: today(), ts: Date.now()};
+  if (Object.keys(items).length) rec.items = items;
+  await addDoc(collection(db, "expenses"), rec);
+  $("item").value = ""; $("amt").value = ""; $("made").value = "";
+  FLAVORS.forEach((n, i) => { $("mk" + i).value = ""; });
+};
+window.addProduct = async () => {
+  const p = Number($("pprice").value);
+  if (!$("pname").value || !(p > 0)) return alert("Type the flavor and the price.");
+  await addDoc(collection(db, "products"), {name: $("pname").value, price: p, ts: Date.now()});
+  $("pname").value = ""; $("pprice").value = "";
+};
+window.delItem = async (col, id) => { if (confirm("Delete this?")) await deleteDoc(doc(db, col, id)); };
+
+function sub(name, ref){
+  let first = true;
+  unsubs.push(onSnapshot(ref, snap => {
+    data[name] = snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a, b) => (b.ts||0) - (a.ts||0));
+    if (isOwner && name === "sales" && !first){
+      snap.docChanges().forEach(ch => {
+        if (ch.type === "added" && !ch.doc.metadata.hasPendingWrites){
+          const s = ch.doc.data();
+          toast("New sale: " + (s.seller || s.email) + " sold " + s.qty + " " + s.product + " (" + kes(s.total) + ")");
+        }
+      });
+    }
+    first = false;
+    refresh();
+  }, err => toast("Error: " + err.message)));
+}
+
+onAuthStateChanged(auth, u => {
+  unsubs.forEach(f => f()); unsubs = [];
+  data = {products: [], trips: [], sales: [], expenses: [], users: [], sellers: []};
+  if (!u){ user = null; showLogin(); return; }
+  user = u;
+  isOwner = low(u.email) === OWNER;
+  tab = isOwner ? "summary" : "sales";
+  setDoc(doc(db, "users", u.uid), {email: u.email, lastLogin: Date.now()}, {merge: true}).catch(() => {});
+  shell();
+  sub("products", collection(db, "products"));
+  if (isOwner){
+    sub("users", collection(db, "users"));
+    sub("sellers", collection(db, "sellers"));
+    sub("trips", collection(db, "trips"));
+    sub("sales", collection(db, "sales"));
+    sub("expenses", collection(db, "expenses"));
+  } else {
+    sub("trips", query(collection(db, "trips"), where("uid", "==", u.uid)));
+    sub("sales", query(collection(db, "sales"), where("uid", "==", u.uid)));
+  }
+});
+</script>
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js');}
+</script>
+</body>
+</html>
