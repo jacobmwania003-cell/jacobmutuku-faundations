@@ -125,6 +125,8 @@ window.setTab = t => {
     '<input id="price" type="number" min="0" inputmode="numeric" placeholder="Price of one pop (KSh)" value="10">' +
     '<label><input id="paid" type="checkbox" checked style="width:auto"> Paid</label>' +
     '<button class="act" onclick="addSale()">Add sale</button></div>';
+  if (t === "sales" && isOwner) f = '<div class="card"><b>Flavors left in chest freezer</b>' +
+    '<input id="fsearch" type="search" placeholder="Search flavor (e.g. Mango)" oninput="flvSearch()"><div id="flv"></div></div>' + f;
   if (t === "expenses") f = '<div class="card"><b>Add money spent</b><input id="item" placeholder="What for? (e.g. sugar, fruit)"><input id="amt" type="number" placeholder="Amount (KSh)">' +
     '<div class="muted">Pops made (optional). Fill each flavor, or only the total box.</div>' +
     FLAVORS.map((n, i) => '<label class="row"><span>' + esc(n) + '</span><input id="mk' + i + '" type="number" min="0" inputmode="numeric" placeholder="0"></label>').join("") +
@@ -201,6 +203,32 @@ function saleLine(x){
     (x.seller ? '<br>Seller: <b>' + esc(x.seller) + '</b>' : '');
 }
 
+function flavorStats(){
+  const fl = {};
+  FLAVORS.forEach(n => { fl[n] = {made: 0, taken: 0, back: 0, out: 0}; });
+  data.expenses.forEach(x => { if (x.items) Object.keys(x.items).forEach(n => { if (fl[n]) fl[n].made += Number(x.items[n]) || 0; }); });
+  data.trips.forEach(t => { if (t.items) Object.keys(t.items).forEach(n => {
+    if (!fl[n]) return;
+    const it = t.items[n];
+    fl[n].taken += it.taken || 0;
+    if (t.returned != null) fl[n].back += it.returned || 0; else fl[n].out += it.taken || 0;
+  }); });
+  return fl;
+}
+function flavorHtml(q){
+  const fl = flavorStats();
+  const k = low(String(q || "").trim());
+  const rows = FLAVORS.filter(n => !k || low(n).includes(k)).map(n => {
+    const f = fl[n], left = f.made - f.taken + f.back;
+    return '<div style="padding:8px 0;border-top:1px solid #eef2f7"><b>' + esc(n) + '</b>: ' +
+      (left < 0 ? '<span class="out">' + left + '</span>' : '<b>' + left + '</b>') +
+      ' in freezer · ' + f.out + ' with sellers</div>';
+  }).join("");
+  return (rows || '<div class="muted">No flavor found.</div>') +
+    '<div class="muted">Pops made are counted from the flavor boxes in the Expenses tab.</div>';
+}
+window.flvSearch = () => refresh();
+
 function sellerCards(d){
   const L = sellerEmails();
   if (!L.length) return '<div class="muted">No sellers yet. Add a seller email above.</div>';
@@ -248,6 +276,7 @@ window.openSeller = k => {
 
 function refresh(){
   const list = $("list"); if (!list) return;
+  const fv = $("flv"); if (fv) fv.innerHTML = flavorHtml($("fsearch").value);
   let h = "";
   const d = today(), ym = d.slice(0, 7);
 
@@ -267,15 +296,7 @@ function refresh(){
     const sold = sum(s, x => x.qty);
     let totExp = 0, totDiff = 0;
     sellerEmails().forEach(u => { const st = stats(u.key, d); totExp += st.exp; totDiff += st.diff; });
-    const fl = {};
-    FLAVORS.forEach(n => { fl[n] = {made: 0, taken: 0, back: 0, out: 0}; });
-    e.forEach(x => { if (x.items) Object.keys(x.items).forEach(n => { if (fl[n]) fl[n].made += Number(x.items[n]) || 0; }); });
-    data.trips.forEach(t => { if (t.items) Object.keys(t.items).forEach(n => {
-      if (!fl[n]) return;
-      const it = t.items[n];
-      fl[n].taken += it.taken || 0;
-      if (t.returned != null) fl[n].back += it.returned || 0; else fl[n].out += it.taken || 0;
-    }); });
+    const fl = flavorStats();
     const flRows = FLAVORS.filter(n => fl[n].made || fl[n].taken).map(n =>
       '<div class="card"><b>' + esc(n) + '</b><br>In freezer: <b>' + (fl[n].made - fl[n].taken + fl[n].back) + '</b> · With sellers: <b>' + fl[n].out + '</b></div>'
     ).join("");
@@ -335,30 +356,4 @@ function c(a, b){ return '<div class="card"><small>' + a + '</small><b>' + b + '
 
 window.addSeller = async () => {
   const e = low($("semail").value.trim());
-  if (!e || e.indexOf("@") < 1) return alert("Type the seller email.");
-  await addDoc(collection(db, "sellers"), {email: e, ts: Date.now()});
-  $("semail").value = "";
-};
-window.pastDate = () => {
-  const v = $("tdate").value;
-  $("tdone").checked = !!v && v < today();
-};
-window.addTrip = async () => {
-  const date = $("tdate").value || today();
-  if (date > today()) return alert("The date cannot be in the future.");
-  const done = $("tdone").checked;
-  const items = {};
-  let total = 0, back = 0, dmg = 0, bad = false, extra = false;
-  FLAVORS.forEach((n, i) => {
-    const tk = Number($("tk" + i).value) || 0;
-    const br = Number($("br" + i).value) || 0;
-    const dm = Number($("dm" + i).value) || 0;
-    if (br || dm) extra = true;
-    if (tk > 0 || br > 0 || dm > 0){
-      if (br + dm > tk) bad = true;
-      items[n] = done ? {taken: tk, returned: br, damaged: dm} : {taken: tk};
-      total += tk; back += br; dmg += dm;
-    }
-  });
-  if (!(total > 0)) return alert("Type how many pops you took.");
-  if (bad) return alert("Back plus damaged cann
+  if (!e || e.index
