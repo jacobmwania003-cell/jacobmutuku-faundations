@@ -104,7 +104,7 @@ window.logout = () => signOut(auth);
 
 function shell(){
   const tabs = isOwner
-    ? [["summary","Summary"],["sellers","Sellers"],["trips","Trips"],["sales","Sales"],["expenses","Expenses"],["products","Products"]]
+    ? [["summary","Summary"],["sellers","Sellers"],["trips","Trips"],["sales","Sales"],["expenses","Expenses"],["made","Made"],["products","Products"]]
     : [["sales","Sales"],["trips","Trips"],["products","Products"]];
   $("app").innerHTML =
     '<div class="top"><h1>🍧 JacobMutuku foundations</h1><button class="small red" onclick="logout()">Log out</button></div>' +
@@ -144,6 +144,12 @@ window.setTab = t => {
     FLAVORS.map((n, i) => '<label class="row"><span>' + esc(n) + '</span><input id="mk' + i + '" type="number" min="0" inputmode="numeric" placeholder="0"></label>').join("") +
     '<input id="made" type="number" placeholder="Total pops made (if no flavors)">' +
     '<button class="act" onclick="addExpense()">Save</button></div>';
+  if (t === "made") f = '<div class="card"><b>Add pops you made</b>' +
+    '<div class="lbl">Flavour</div><input id="mflav" list="flavlist" placeholder="e.g. Mango"><datalist id="flavlist">' + FLAVORS.map(n => '<option value="' + esc(n) + '">').join("") + '</datalist>' +
+    '<div class="two"><div><div class="lbl">How many</div><input id="mqty" type="number" inputmode="numeric"></div>' +
+    '<div><div class="lbl">Date</div><input id="mdate" type="date" value="' + today() + '" max="' + today() + '"></div></div>' +
+    '<div class="muted" style="margin-top:6px">To fix the stock, type a minus number (for example -4).</div>' +
+    '<button class="act" style="background:#e00613" onclick="addMade()">Save</button></div>';
   if (t === "products" && isOwner) f = '<div class="card"><b>Add a flavor</b><input id="pname" placeholder="Flavor (e.g. Mango)"><input id="pprice" type="number" placeholder="Price (KSh)"><button class="act" onclick="addProduct()">Add flavor</button></div>';
   if (t === "sellers") f = '<div class="card"><b>Add a seller to my list</b><input id="semail" type="email" placeholder="Seller email"><button class="act" onclick="addSeller()">Add seller</button><div class="muted">The seller must also have a login in Firebase Authentication.</div></div>';
   $("content").innerHTML = f + '<div id="list"></div>';
@@ -216,8 +222,7 @@ function saleLine(x){
     (x.seller ? '<br>Seller: <b>' + esc(x.seller) + '</b>' : '') +
     (x.customer ? '<br>Customer: ' + esc(x.customer) : '');
 }
-
-function flavorStats(){
+  function flavorStats(){
   const fl = {};
   const get = n => fl[n] || (fl[n] = {made: 0, taken: 0, back: 0, out: 0});
   FLAVORS.forEach(n => get(n));
@@ -239,10 +244,11 @@ function flavorHtml(q){
       ' in freezer · ' + f.out + ' with sellers</div>';
   }).join("");
   return (rows || '<div class="muted">No flavor found.</div>') +
-    '<div class="muted">Pops made are counted from the flavor boxes in the Expenses tab.</div>';
+    '<div class="muted">Pops made are counted from the Made tab.</div>';
 }
 window.flvSearch = () => refresh();
-  function sellerCards(d){
+
+function sellerCards(d){
   const L = sellerEmails();
   if (!L.length) return '<div class="muted">No sellers yet. Add a seller email above.</div>';
   return L.map(u => {
@@ -288,8 +294,7 @@ window.openSeller = k => {
   $("content").innerHTML = '<div id="list"></div>';
   refresh();
 };
-
-function refresh(){
+  function refresh(){
   const list = $("list"); if (!list) return;
   const fv = $("flv"); if (fv) fv.innerHTML = flavorHtml($("fsearch").value);
   ["sby", "tby"].forEach(id => {
@@ -367,8 +372,17 @@ function refresh(){
     ).join("") : '<div class="muted">No sales yet.</div>';
   }
 
+  if (tab === "made"){
+    const L = data.expenses.filter(x => x.kind === "made");
+    h += '<div class="card"><b>History</b>' + (L.length ? L.map(x =>
+      '<div style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #eef2f7"><div>' + dot(x.item) + '<b>' + esc(x.item) + '</b><br><span class="muted">' + esc(x.date) + '</span></div>' +
+      '<div style="text-align:right"><b style="font-size:20px">' + x.qty + '</b><br><button class="small" onclick="editMade(\''+x.id+'\')">Edit</button><button class="small red" onclick="delItem(\'expenses\',\''+x.id+'\')">Delete</button></div></div>'
+    ).join("") : '<div class="muted">Nothing added yet.</div>') + '</div>';
+  }
+
   if (tab === "expenses"){
-    h += data.expenses.length ? data.expenses.map(x =>
+    const EX = data.expenses.filter(x => x.kind !== "made");
+    h += EX.length ? EX.map(x =>
       '<div class="card"><b>' + esc(x.item) + '</b> - ' + kes(x.amount) + (x.qty ? ' · ' + x.qty + ' pops made' : '') +
       '<br><span class="muted">' + esc(x.date) + '</span><button class="small red" onclick="delItem(\'expenses\',\''+x.id+'\')">Delete</button></div>'
     ).join("") : '<div class="muted">Nothing spent yet.</div>';
@@ -492,6 +506,32 @@ window.addSale = async () => {
   }
 };
 window.paySale = id => updateDoc(doc(db, "sales", id), {paid: true});
+window.addMade = async () => {
+  const raw = $("mflav").value.trim();
+  const q = Number($("mqty").value);
+  const date = $("mdate").value || today();
+  if (!raw) return alert("Type the flavour (e.g. Mango).");
+  if (!q || isNaN(q)) return alert("Type how many pops. Use a minus number to take away.");
+  if (date > today()) return alert("The date cannot be in the future.");
+  const canon = FLAVORS.find(n => low(n) === low(raw)) || (raw.charAt(0).toUpperCase() + raw.slice(1));
+  const ts = date === today() ? Date.now() : new Date(date + "T12:00:00").getTime();
+  try {
+    await addDoc(collection(db, "expenses"), {kind: "made", item: canon, amount: 0, qty: q, items: {[canon]: q}, date: date, ts: ts});
+    toast("Saved: " + q + " " + canon);
+    $("mqty").value = ""; $("mflav").value = "";
+  } catch(e){
+    alert("Could not save: " + e.message);
+  }
+};
+window.editMade = async id => {
+  const x = data.expenses.find(y => y.id === id);
+  if (!x) return;
+  const v = prompt("New number for " + x.item + "?", x.qty);
+  if (v === null) return;
+  const n = Number(v);
+  if (!n || isNaN(n)) return alert("Type a number (not zero).");
+  await updateDoc(doc(db, "expenses", id), {qty: n, items: {[x.item]: n}});
+};
 window.addExpense = async () => {
   const a = Number($("amt").value);
   if (!$("item").value || !(a > 0)) return alert("Type what for and the amount.");
