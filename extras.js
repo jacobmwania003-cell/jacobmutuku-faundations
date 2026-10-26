@@ -1,6 +1,6 @@
-import {getApp, getApps, initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+ import {getApp, getApps, initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth, onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore, collection, onSnapshot, query, where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore, collection, doc, updateDoc, onSnapshot, query, where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const cfg = {
   apiKey: "AIzaSyDLDw73TgCaItVk_F2Nj-Q0VpqWGQCiqKc",
@@ -32,8 +32,8 @@ const fmtK = v => v >= 1000 ? (Math.round(v / 100) / 10) + "k" : String(Math.rou
 const dotH = c => '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:8px;vertical-align:-2px;background:' + c + '"></span>';
 
 let user = null, isOwner = false, range = 14, lowAlerted = false;
-let data = {sales: [], trips: [], expenses: []};
-let loaded = {}, unsubs = [];
+let data = {sales: [], trips: [], expenses: [], users: []};
+let loaded = {}, unsubs = [], fixed = new Set(), syncWarned = false;
 
 function niceMax(m){
   const p = Math.pow(10, Math.floor(Math.log10(m)));
@@ -208,7 +208,32 @@ function ensureUI(){
   }
 }
 
+function syncOwned(){
+  const uidBy = {};
+  data.users.forEach(u => { if (u.email) uidBy[low(u.email)] = u.id; });
+  [["sales", data.sales], ["trips", data.trips]].forEach(pair => {
+    const col = pair[0];
+    pair[1].forEach(x => {
+      const k = low(x.email), target = uidBy[k], key = col + "/" + x.id;
+      if (!k || k === OWNER || !target || x.uid === target || fixed.has(key)) return;
+      fixed.add(key);
+      updateDoc(doc(db, col, x.id), {uid: target}).catch(() => {
+        if (syncWarned) return;
+        syncWarned = true;
+        const t = document.getElementById("toast");
+        if (t){
+          t.style.background = "#c0392b";
+          t.textContent = "Could not share an entry with the seller. Tell Claude: Firebase rules may need a change.";
+          t.style.display = "block";
+          setTimeout(() => { t.style.display = "none"; }, 8000);
+        }
+      });
+    });
+  });
+}
+
 function update(){
+  if (isOwner) syncOwned();
   ensureUI();
   lowBanner();
   renderCharts();
@@ -227,8 +252,8 @@ function sub(name, ref){
 
 onAuthStateChanged(auth, u => {
   unsubs.forEach(f => f()); unsubs = [];
-  data = {sales: [], trips: [], expenses: []};
-  loaded = {}; lowAlerted = false;
+  data = {sales: [], trips: [], expenses: [], users: []};
+  loaded = {}; lowAlerted = false; fixed = new Set(); syncWarned = false;
   user = u || null;
   if (!u) return;
   isOwner = low(u.email) === OWNER;
@@ -236,6 +261,7 @@ onAuthStateChanged(auth, u => {
     sub("sales", collection(db, "sales"));
     sub("trips", collection(db, "trips"));
     sub("expenses", collection(db, "expenses"));
+    sub("users", collection(db, "users"));
   } else {
     sub("sales", query(collection(db, "sales"), where("uid", "==", u.uid)));
     sub("trips", query(collection(db, "trips"), where("uid", "==", u.uid)));
