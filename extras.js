@@ -1,4 +1,4 @@
- import {getApp, getApps, initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getApp, getApps, initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth, onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {getFirestore, collection, onSnapshot, query, where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
