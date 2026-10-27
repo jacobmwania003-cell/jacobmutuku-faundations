@@ -1,6 +1,6 @@
  import {getApp, getApps, initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth, onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore, collection, doc, updateDoc, onSnapshot, query, where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore, collection, onSnapshot, query, where} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const cfg = {
   apiKey: "AIzaSyDLDw73TgCaItVk_F2Nj-Q0VpqWGQCiqKc",
@@ -31,9 +31,9 @@ const dayStr = i => { const d = new Date(); d.setDate(d.getDate() - i); return d
 const fmtK = v => v >= 1000 ? (Math.round(v / 100) / 10) + "k" : String(Math.round(v));
 const dotH = c => '<span style="display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:8px;vertical-align:-2px;background:' + c + '"></span>';
 
-let user = null, isOwner = false, range = 14, lowAlerted = false;
-let data = {sales: [], trips: [], expenses: [], users: []};
-let loaded = {}, unsubs = [], fixed = new Set(), syncWarned = false;
+let user = null, isOwner = false, mode = "daily", lowAlerted = false;
+let data = {sales: [], trips: [], expenses: []};
+let loaded = {}, unsubs = [];
 
 function niceMax(m){
   const p = Math.pow(10, Math.floor(Math.log10(m)));
@@ -55,7 +55,7 @@ function lineChart(labels, series){
   }
   const step = Math.ceil(labels.length / 6);
   labels.forEach((l, i) => {
-    if (i % step === 0) g += '<text x="' + x(i) + '" y="' + (H - 10) + '" font-size="10" text-anchor="middle" fill="#5b6877">' + esc(l.slice(5)) + '</text>';
+    if (i % step === 0) g += '<text x="' + x(i) + '" y="' + (H - 10) + '" font-size="10" text-anchor="middle" fill="#5b6877">' + esc(l) + '</text>';
   });
   series.forEach(s => {
     g += '<polyline points="' + s.values.map((v, i) => x(i) + "," + y(v)).join(" ") + '" fill="none" stroke="' + s.color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>';
@@ -92,15 +92,53 @@ function groupItems(arr, keyFn, valFn){
   return Object.keys(m).sort((a, b) => m[b] - m[a]).map((k, i) => ({label: k, value: m[k], color: COLORS[k] || PALETTE[i % PALETTE.length]}));
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MODES = {daily: "Daily", weekly: "Weekly", monthly: "Monthly", annual: "Annually"};
+const WINDOW = {daily: "last 14 days", weekly: "last 12 weeks", monthly: "last 12 months", annual: "last 5 years"};
+const mondayOf = dt => { const d = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 12); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+
+function buckets(){
+  const out = [], now = new Date();
+  if (mode === "daily"){
+    for (let i = 13; i >= 0; i--){ const d = new Date(); d.setDate(d.getDate() - i); out.push({key: ds(d), label: ds(d).slice(5)}); }
+  } else if (mode === "weekly"){
+    const base = mondayOf(now);
+    for (let i = 11; i >= 0; i--){ const d = new Date(base); d.setDate(base.getDate() - 7 * i); out.push({key: ds(d), label: ds(d).slice(5)}); }
+  } else if (mode === "monthly"){
+    for (let i = 11; i >= 0; i--){ const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push({key: ds(d).slice(0, 7), label: MONTHS[d.getMonth()] + " " + String(d.getFullYear()).slice(2)}); }
+  } else {
+    for (let i = 4; i >= 0; i--){ const y = String(now.getFullYear() - i); out.push({key: y, label: y}); }
+  }
+  return out;
+}
+
+function bucketKey(dateStr){
+  if (mode === "daily") return dateStr;
+  if (mode === "weekly") return ds(mondayOf(new Date(dateStr + "T12:00:00")));
+  if (mode === "monthly") return String(dateStr).slice(0, 7);
+  return String(dateStr).slice(0, 4);
+}
+
+function windowStart(first){
+  if (mode === "monthly") return first + "-01";
+  if (mode === "annual") return first + "-01-01";
+  return first;
+}
+
 const box = (t, body) => '<div class="card"><b>' + esc(t) + '</b><div style="margin-top:8px">' + body + '</div></div>';
 
 function chartsHtml(){
   const d = ds(new Date());
-  const labels = [];
-  for (let i = range - 1; i >= 0; i--) labels.push(dayStr(i));
-  const from = labels[0];
+  const bk = buckets();
+  const labels = bk.map(b => b.label);
+  const from = windowStart(bk[0].key);
+  const sumBy = (arr, dateOf, valOf) => {
+    const m = {};
+    arr.forEach(x => { const k = bucketKey(dateOf(x)); m[k] = (m[k] || 0) + (Number(valOf(x)) || 0); });
+    return bk.map(b => m[b.key] || 0);
+  };
   const S = data.sales.filter(x => x.date >= from && x.date <= d);
-  const salesVals = labels.map(l => sum(S.filter(x => x.date === l), x => x.total));
+  const salesVals = sumBy(S, x => x.date, x => x.total);
   const flavKey = x => FLAVORS.find(n => low(n) === low(x.product)) || x.product || "Other";
   const T = data.trips.filter(t => t.returned != null && t.date >= from && t.date <= d);
   const tk = sum(T, t => t.taken), rt = sum(T, t => t.returned), dm = sum(T, t => t.damaged);
@@ -114,13 +152,14 @@ function chartsHtml(){
     {label: "Paid", value: sum(S.filter(x => x.paid), x => x.total), color: "#2e9e4f"},
     {label: "Not paid yet", value: sum(S.filter(x => !x.paid), x => x.total), color: "#e0243c"}
   ];
-  let h = '<div class="card"><b>Business performance</b><div style="color:#5b6877;font-size:14px;margin-top:8px">Show the last</div>' +
+  let h = '<div class="card"><b>Business performance</b><div style="color:#5b6877;font-size:14px;margin-top:8px">Show</div>' +
     '<select id="crange2" style="width:100%;padding:12px;margin:4px 0;font-size:16px;border-radius:8px;border:1px solid #9aa7b6">' +
-    [7, 14, 30].map(n => '<option value="' + n + '"' + (n === range ? " selected" : "") + '>' + n + ' days</option>').join("") + '</select></div>';
+    Object.keys(MODES).map(k => '<option value="' + k + '"' + (k === mode ? " selected" : "") + '>' + MODES[k] + '</option>').join("") + '</select>' +
+    '<div style="color:#5b6877;font-size:13px">Showing the ' + WINDOW[mode] + '</div></div>';
   if (isOwner){
     const EX = data.expenses.filter(x => x.kind !== "made" && x.date >= from && x.date <= d);
-    const spentVals = labels.map(l => sum(EX.filter(x => x.date === l), x => x.amount));
-    h += box("Sales and money spent", lineChart(labels, [
+    const spentVals = sumBy(EX, x => x.date, x => x.amount);
+    h += box("Sales and money spent (" + MODES[mode].toLowerCase() + ")", lineChart(labels, [
       {name: "Sales", color: "#1155c4", values: salesVals},
       {name: "Money spent", color: "#e0243c", values: spentVals}
     ]));
@@ -139,7 +178,7 @@ function chartsHtml(){
     h += box("Pops taken out (finished trips)", pieChart(pops));
     h += box("Paid and not paid sales", pieChart(paidItems));
   } else {
-    h += box("My sales and my pay", lineChart(labels, [
+    h += box("My sales and my pay (" + MODES[mode].toLowerCase() + ")", lineChart(labels, [
       {name: "My sales", color: "#1155c4", values: salesVals},
       {name: "My pay (" + Math.round(RATE * 100) + "%)", color: "#2e9e4f", values: salesVals.map(pay)}
     ]));
@@ -155,7 +194,7 @@ function renderCharts(){
   if (!el || !user) return;
   el.innerHTML = chartsHtml();
   const sel = document.getElementById("crange2");
-  if (sel) sel.onchange = () => { range = Number(sel.value) || 14; renderCharts(); };
+  if (sel) sel.onchange = () => { mode = sel.value; renderCharts(); };
 }
 
 function openCharts(){
@@ -208,32 +247,7 @@ function ensureUI(){
   }
 }
 
-function syncOwned(){
-  const uidBy = {};
-  data.users.forEach(u => { if (u.email) uidBy[low(u.email)] = u.id; });
-  [["sales", data.sales], ["trips", data.trips]].forEach(pair => {
-    const col = pair[0];
-    pair[1].forEach(x => {
-      const k = low(x.email), target = uidBy[k], key = col + "/" + x.id;
-      if (!k || k === OWNER || !target || x.uid === target || fixed.has(key)) return;
-      fixed.add(key);
-      updateDoc(doc(db, col, x.id), {uid: target}).catch(() => {
-        if (syncWarned) return;
-        syncWarned = true;
-        const t = document.getElementById("toast");
-        if (t){
-          t.style.background = "#c0392b";
-          t.textContent = "Could not share an entry with the seller. Tell Claude: Firebase rules may need a change.";
-          t.style.display = "block";
-          setTimeout(() => { t.style.display = "none"; }, 8000);
-        }
-      });
-    });
-  });
-}
-
 function update(){
-  if (isOwner) syncOwned();
   ensureUI();
   lowBanner();
   renderCharts();
@@ -252,8 +266,8 @@ function sub(name, ref){
 
 onAuthStateChanged(auth, u => {
   unsubs.forEach(f => f()); unsubs = [];
-  data = {sales: [], trips: [], expenses: [], users: []};
-  loaded = {}; lowAlerted = false; fixed = new Set(); syncWarned = false;
+  data = {sales: [], trips: [], expenses: []};
+  loaded = {}; lowAlerted = false;
   user = u || null;
   if (!u) return;
   isOwner = low(u.email) === OWNER;
@@ -261,7 +275,6 @@ onAuthStateChanged(auth, u => {
     sub("sales", collection(db, "sales"));
     sub("trips", collection(db, "trips"));
     sub("expenses", collection(db, "expenses"));
-    sub("users", collection(db, "users"));
   } else {
     sub("sales", query(collection(db, "sales"), where("uid", "==", u.uid)));
     sub("trips", query(collection(db, "trips"), where("uid", "==", u.uid)));
