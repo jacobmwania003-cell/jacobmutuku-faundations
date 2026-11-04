@@ -31,7 +31,11 @@ function send(title, body){
 window.addEventListener("online", flush);
 flush();
 
-const app = getApp();
+let app;
+for (let i = 0; i < 40 && !app; i++){
+  try { app = getApp(); }
+  catch(e){ await new Promise(r => setTimeout(r, 500)); }
+}
 const auth = getAuth(app);
 const db = getFirestore(app);
 let stops = [];
