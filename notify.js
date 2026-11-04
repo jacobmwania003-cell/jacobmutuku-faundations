@@ -29,7 +29,7 @@ function send(title, body){
   flush();
 }
 window.addEventListener("online", flush);
-flush();send("Notify test 1", "notify.js loaded");
+flush();
 
 let app;
 for (let i = 0; i < 40 && !app; i++){
@@ -37,7 +37,6 @@ for (let i = 0; i < 40 && !app; i++){
   catch(e){ await new Promise(r => setTimeout(r, 500)); }
 }
 const auth = getAuth(app);
-send("Notify test 2", "app found");
 const db = getFirestore(app);
 let stops = [];
 
@@ -55,7 +54,7 @@ onAuthStateChanged(auth, user => {
 
   stops.push(onSnapshot(mine("sales"), snap => {
     salesDocs = snap.docs.map(d => d.data());
-  }, () => {}));
+  }, e => send("Notify error sales", String(e.code || e))));
 
   stops.push(onSnapshot(mine("trips"), snap => {
     tripDocs = snap.docs.map(d => d.data());
@@ -64,6 +63,7 @@ onAuthStateChanged(auth, user => {
       const local = ch.doc.metadata.hasPendingWrites;
       const before = seen.get(id);
       seen.set(id, t.returned == null ? null : t.returned);
+      send("Debug trip", ch.type + " local=" + local + " first=" + first);
       if (first || !local) return;
       const who = String(t.email || "Seller").split("@")[0];
       const items = Object.keys(t.items || {}).map(n => n + " " + (t.items[n].taken || 0)).join(", ");
@@ -82,5 +82,5 @@ onAuthStateChanged(auth, user => {
       }
     });
     first = false;
-  }, () => {}));
+  }, e => send("Notify error trips", String(e.code || e))));
 });
