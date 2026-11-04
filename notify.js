@@ -30,7 +30,6 @@ function send(title, body){
 }
 window.addEventListener("online", flush);
 flush();
-send("Notify v3", "new file loaded");
 
 let app;
 for (let i = 0; i < 40 && !app; i++){
@@ -47,7 +46,7 @@ onAuthStateChanged(auth, user => {
   if (!user) return;
   const mine = name => low(user.email) === OWNER
     ? collection(db, name)
-    : query(collection(db, name), where("email", "==", user.email));
+    : query(collection(db, name), where("uid", "==", user.uid));
 
   let salesDocs = [], tripDocs = [];
   const seen = new Map();
