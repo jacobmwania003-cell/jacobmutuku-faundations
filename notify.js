@@ -29,7 +29,7 @@ function send(title, body){
   flush();
 }
 window.addEventListener("online", flush);
-flush();
+flush();send("Notify test 1", "notify.js loaded");
 
 let app;
 for (let i = 0; i < 40 && !app; i++){
@@ -37,6 +37,7 @@ for (let i = 0; i < 40 && !app; i++){
   catch(e){ await new Promise(r => setTimeout(r, 500)); }
 }
 const auth = getAuth(app);
+send("Notify test 2", "app found");
 const db = getFirestore(app);
 let stops = [];
 
