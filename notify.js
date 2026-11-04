@@ -30,6 +30,7 @@ function send(title, body){
 }
 window.addEventListener("online", flush);
 flush();
+send("Notify v3", "new file loaded");
 
 let app;
 for (let i = 0; i < 40 && !app; i++){
